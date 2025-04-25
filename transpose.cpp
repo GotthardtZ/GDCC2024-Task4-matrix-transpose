@@ -39,9 +39,15 @@ void transpose_image(const char* input_file, const char* output_file) {
   output_header[1] = width;
   uint16_t* output_pixels = (uint16_t*)(output_header + 2);
 
-  for (size_t i = 0; i < height; i++) {
-    for (size_t j = 0; j < width; j++) {
-      output_pixels[j * height + i] = input_pixels[i * width + j];
+  size_t input_column = 0;
+  size_t target_index = 0;
+  for (size_t input_index = 0; input_index < total_pixels; input_index++) {
+    output_pixels[target_index] = input_pixels[input_index];
+    input_column++;
+    target_index += height;
+    if (input_column == width) {
+      input_column = 0;
+      target_index -= total_pixels - 1;
     }
   }
 
