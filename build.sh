@@ -1,0 +1,1 @@
+g++ -s -O3 -march=haswell -mtune=haswell transpose.cpp -o transpose
