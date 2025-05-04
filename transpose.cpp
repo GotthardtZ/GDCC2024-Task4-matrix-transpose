@@ -51,10 +51,10 @@ void transpose_image(const char* input_file, const char* output_file) {
     size_t target_index = 0;
     for (size_t input_index = 0; input_index < total_pixels; input_index++) {
       if (target_index < input_index) {
-         uint16_t tmp1 = output_pixels[input_index];
-         uint16_t tmp2 = output_pixels[target_index];
-         output_pixels[input_index] = tmp2;
-         output_pixels[target_index] =tmp1;
+        uint16_t tmp1 = output_pixels[input_index];
+        uint16_t tmp2 = output_pixels[target_index];
+        output_pixels[input_index] = tmp2;
+        output_pixels[target_index] =tmp1;
       }
 
       input_column++;
@@ -68,23 +68,22 @@ void transpose_image(const char* input_file, const char* output_file) {
   else {
     // transpose by copying
 
-    uint16_t* input_pixels = (uint16_t*)malloc(total_pixels * sizeof(uint16_t));
-
-    if (fread(input_pixels, sizeof(uint16_t), total_pixels, in_fp) != total_pixels) {
-      perror("Error reading image");
-      fclose(in_fp);
-      exit(EXIT_FAILURE);
-    }
+    constexpr size_t BUFFER_SIZE = 64 * 1024;
+    uint16_t* input_pixels = (uint16_t*)malloc(BUFFER_SIZE);
 
     size_t input_column = 0;
     size_t target_index = 0;
-    for (size_t input_index = 0; input_index < total_pixels; input_index++) {
-      output_pixels[target_index] = input_pixels[input_index];
-      input_column++;
-      target_index += height;
-      if (input_column == width) {
-        input_column = 0;
-        target_index -= total_pixels - 1;
+    size_t elements_count = BUFFER_SIZE / sizeof(uint16_t);
+    size_t elements_read;
+    while ((elements_read = fread(input_pixels, sizeof(uint16_t), elements_count, in_fp)) > 0) {
+      for (size_t i = 0; i < elements_read; ++i) {
+        output_pixels[target_index] = input_pixels[i];
+        input_column++;
+        target_index += height;
+        if (input_column == width) {
+          input_column = 0;
+          target_index -= total_pixels - 1;
+        }
       }
     }
   }
