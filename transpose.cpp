@@ -213,7 +213,133 @@ static void transpose8x8SSE2_diagonal(uint16_t* matrix_src, size_t width) {
   _mm_storeu_si128((__m128i*) & matrix_src[width * 7], row7);
 }
 
-static void transpose_image(FILE* in_fp, FILE* out_fp) {
+#ifdef _WIN32
+
+#include <windows.h>
+
+static void* MemoryMapFile(const char* fileName, size_t* fileSize) {
+  // Open the file
+  HANDLE hFile = CreateFileA(
+    fileName,
+    GENERIC_READ,
+    FILE_SHARE_READ,
+    NULL,
+    OPEN_EXISTING,
+    FILE_ATTRIBUTE_NORMAL,
+    NULL
+  );
+
+  if (hFile == INVALID_HANDLE_VALUE) {
+    fprintf(stderr, "Error opening file: %lu\n", GetLastError());
+    return NULL;
+  }
+
+  // Get the file size
+  LARGE_INTEGER fileSizeStruct;
+  if (!GetFileSizeEx(hFile, &fileSizeStruct)) {
+    fprintf(stderr, "Error getting file size: %lu\n", GetLastError());
+    CloseHandle(hFile);
+    return NULL;
+  }
+
+  *fileSize = (size_t)fileSizeStruct.QuadPart;
+
+  // Create a file mapping object
+  HANDLE hMapping = CreateFileMappingA(
+    hFile,
+    NULL,
+    PAGE_READONLY,
+    0,
+    0,
+    NULL
+  );
+
+  if (hMapping == NULL) {
+    fprintf(stderr, "Error creating file mapping: %lu\n", GetLastError());
+    CloseHandle(hFile);
+    return NULL;
+  }
+
+  // Map the file into memory
+  void* mappedFile = MapViewOfFile(
+    hMapping,
+    FILE_MAP_READ,
+    0,
+    0,
+    0
+  );
+
+  if (mappedFile == NULL) {
+    fprintf(stderr, "Error mapping view of file: %lu\n", GetLastError());
+    CloseHandle(hMapping);
+    CloseHandle(hFile);
+    return NULL;
+  }
+
+  // Close the file and mapping handles, leaving the mapped file active
+  CloseHandle(hMapping);
+  CloseHandle(hFile);
+
+  return mappedFile;
+}
+
+static void UnmapFile(void* mappedFile, size_t fileSize) {
+  if (mappedFile) {
+    UnmapViewOfFile(mappedFile);
+  }
+}
+
+#elif __linux__
+
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <stdio.h>
+
+static void* MemoryMapFile(const char* fileName, size_t* fileSize) {
+  // Open the file
+  int fd = open(fileName, O_RDONLY);
+  if (fd == -1) {
+    perror("Error opening file");
+    return NULL;
+  }
+
+  // Get the file size
+  struct stat fileStat;
+  if (fstat(fd, &fileStat) == -1) {
+    perror("Error getting file size");
+    close(fd);
+    return NULL;
+  }
+
+  *fileSize = (size_t)fileStat.st_size;
+
+  // Map the file into memory
+  void* mappedFile = mmap(NULL, *fileSize, PROT_READ, MAP_PRIVATE, fd, 0);
+  if (mappedFile == MAP_FAILED) {
+    perror("Error mapping file");
+    close(fd);
+    return NULL;
+  }
+
+  // Close the file descriptor, leaving the mapping active
+  close(fd);
+
+  return mappedFile;
+}
+
+static void UnmapFile(void* mappedFile, size_t fileSize) {
+  if (mappedFile) {
+    if (munmap(mappedFile, fileSize) == -1) {
+      perror("Error unmapping file");
+    }
+  }
+}
+
+#endif
+
+static void transpose_image(FILE* in_fp, FILE* out_fp, char* input_file) {
 
   // Read header (image dimensions)
   uint32_t width32, height32;
@@ -239,11 +365,7 @@ static void transpose_image(FILE* in_fp, FILE* out_fp) {
     // square matrix
     // transpose in-place
 
-    if (fread(output_pixels, sizeof(uint16_t), total_pixels, in_fp) != total_pixels) {
-      perror("Error reading image");
-      fclose(in_fp);
-      exit(EXIT_FAILURE);
-    }
+    fread(output_pixels, sizeof(uint16_t), total_pixels, in_fp);
 
     if ((width & 7) == 0) {
       // square matrix, width and height are multiple of 8 
@@ -327,10 +449,15 @@ static void transpose_image(FILE* in_fp, FILE* out_fp) {
     // generic matrix
     // transpose by copying
 
-    void* input_malloc = malloc(total_pixels * sizeof(uint16_t) + 31);
-    uint16_t* input_pixels = (uint16_t*) (((uintptr_t)input_malloc + 31) & ~((uintptr_t)31));
-    
-    fread(input_pixels, sizeof(uint16_t), total_pixels, in_fp);
+    size_t fileSize = 0;
+    void* mappedFile_in = MemoryMapFile(input_file, &fileSize);
+
+    if (!mappedFile_in) {
+      perror("Error opening input file");
+      exit(EXIT_FAILURE);
+    }
+
+    uint16_t* const input_pixels = (uint16_t*)(mappedFile_in) + 4;
 
     size_t source_row = 0;
     for (; source_row + 8 <= height; source_row += 8) {
@@ -380,6 +507,7 @@ static void transpose_image(FILE* in_fp, FILE* out_fp) {
       }
     }
 
+    UnmapFile(mappedFile_in, fileSize);
     fwrite(output_pixels, sizeof(uint16_t), total_pixels, out_fp);
   }
 }
@@ -406,7 +534,7 @@ int main(int argc, char* argv[]) {
     exit(EXIT_FAILURE);
   }
   
-  transpose_image(in_fp, out_fp);
+  transpose_image(in_fp, out_fp, input_file);
 
   fclose(in_fp);
   fclose(out_fp);
