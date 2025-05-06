@@ -15,7 +15,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="transpose.cpp">
+    <ClCompile Include="transpose.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

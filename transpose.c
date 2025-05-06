@@ -1,6 +1,166 @@
-#include <stdint.h>
+#define PRINT_ERRORS false
 
-#include <emmintrin.h>
+#include <stdint.h> // for uint16_t, uint32_t, uintptr_t
+
+#define false 0
+#define true  1
+
+typedef unsigned long int size_t;
+typedef long int ssize_t;
+typedef long int off_t;
+
+// External syscall functions provided by syscall.S
+extern ssize_t syscall1(int syscall_number, uintptr_t arg1);
+extern ssize_t syscall2(int syscall_number, uintptr_t arg1, uintptr_t arg2);
+extern ssize_t syscall3(int syscall_number, uintptr_t arg1, uintptr_t arg2, uintptr_t arg3);
+extern ssize_t syscall4(int syscall_number, uintptr_t arg1, uintptr_t arg2, uintptr_t arg3, uintptr_t arg4);
+extern ssize_t syscall5(int syscall_number, uintptr_t arg1, uintptr_t arg2, uintptr_t arg3, uintptr_t arg4, uintptr_t arg5);
+extern ssize_t syscall6(int syscall_number, uintptr_t arg1, uintptr_t arg2, uintptr_t arg3, uintptr_t arg4, uintptr_t arg5, uintptr_t arg6);
+
+// Constants for mmap
+#define NULL 0
+#define PROT_READ  0x1
+#define PROT_WRITE 0x2
+#define MAP_PRIVATE 0x02
+#define MAP_SHARED  0x01
+#define MAP_FAILED  ((void*)-1)
+
+// Constants for open
+#define O_RDONLY 0x0
+#define O_RDWR   0x2
+#define O_CREAT  0x40
+
+// Syscall functions
+
+// open
+static int open(const char* pathname, int flags, int mode) {
+  const int SYS_open = 2;  // SYS_open syscall number on Linux
+  return (int)syscall3(SYS_open, (uintptr_t)pathname, (uintptr_t)flags, (uintptr_t)mode);
+}
+
+// read
+static ssize_t read(int fd, void* buf, uintptr_t count) {
+  const int SYS_read = 0;  // SYS_read syscall number on Linux
+  return syscall3(SYS_read, (uintptr_t)fd, (uintptr_t)buf, count);
+}
+
+// write
+static ssize_t write(int fd, const void* data, uintptr_t nbytes) {
+  const int SYS_write = 1; // SYS_write syscall number on Linux
+  return syscall3(SYS_write, fd, (uintptr_t)data, nbytes);
+}
+
+// close
+static int close(int fd) {
+  const int SYS_close = 3;  // SYS_close syscall number on Linux
+  return (int)syscall1(SYS_close, (uintptr_t)fd);
+}
+
+// mmap
+static void* mmap(void* addr, uintptr_t length, int prot, int flags, int fd, off_t offset) {
+  const int SYS_mmap = 9;  // SYS_mmap syscall number on Linux
+  return (void*)syscall6(SYS_mmap, (uintptr_t)addr, length, (uintptr_t)prot, (uintptr_t)flags, (uintptr_t)fd, (uintptr_t)offset);
+}
+
+// ftruncate
+static int ftruncate(int fd, off_t length) {
+  const int SYS_ftruncate = 77;  // SYS_ftruncate syscall number on Linux
+  return (int)syscall2(SYS_ftruncate, (uintptr_t)fd, (uintptr_t)length);
+}
+
+// munmap
+static int munmap(void* addr, uintptr_t length) {
+  const int SYS_munmap = 11;  // SYS_munmap syscall number on Linux
+  return (int)syscall2(SYS_munmap, (uintptr_t)addr, length);
+}
+
+// sbrk
+static void* sbrk(intptr_t increment) {
+  const int SYS_brk = 12;  // SYS_brk syscall number on Linux
+  uintptr_t current_brk = (uintptr_t)syscall1(SYS_brk, 0); // Get current program break (top of heap)
+  if (current_brk != (uintptr_t)-1 && increment != 0) {
+    uintptr_t new_brk = current_brk + increment;
+    uintptr_t current_brk = (uintptr_t)syscall1(SYS_brk, new_brk);
+  }
+  return (void*)current_brk;
+}
+
+// _exit
+__attribute__((noreturn)) 
+static void _exit(int status) {
+  const int SYS_exit = 60;  // SYS_exit syscall number on Linux
+  syscall1(SYS_exit, (uintptr_t)status);
+  __builtin_unreachable();  // Inform the compiler this function never returns
+}
+
+// Implementations from <emmintrin.h>
+
+typedef long long __v2di __attribute__((__vector_size__(16)));
+typedef int __v4si __attribute__((__vector_size__(16)));
+typedef short __v8hi __attribute__((__vector_size__(16)));
+
+typedef long long __m128i __attribute__((__vector_size__(16), __may_alias__));
+typedef long long __m128i_u __attribute__((__vector_size__(16), __may_alias__, __aligned__(1)));
+
+static __inline __m128i __attribute__((__gnu_inline__, __always_inline__, __artificial__))
+_mm_load_si128(__m128i const* __P)
+{
+  return *__P;
+}
+
+static __inline __m128i __attribute__((__gnu_inline__, __always_inline__, __artificial__))
+_mm_loadu_si128(__m128i_u const* __P)
+{
+  return *__P;
+}
+
+static __inline void __attribute__((__gnu_inline__, __always_inline__, __artificial__))
+_mm_store_si128(__m128i* __P, __m128i __B)
+{
+  *__P = __B;
+}
+
+static __inline void __attribute__((__gnu_inline__, __always_inline__, __artificial__))
+_mm_storeu_si128 (__m128i_u *__P, __m128i __B)
+{
+  *__P = __B;
+}
+
+static __inline __m128i __attribute__((__gnu_inline__, __always_inline__, __artificial__))
+_mm_unpacklo_epi16(__m128i __A, __m128i __B)
+{
+  return (__m128i)__builtin_ia32_punpcklwd128((__v8hi)__A, (__v8hi)__B);
+}
+
+static __inline __m128i __attribute__((__gnu_inline__, __always_inline__, __artificial__))
+_mm_unpackhi_epi16(__m128i __A, __m128i __B)
+{
+  return (__m128i)__builtin_ia32_punpckhwd128((__v8hi)__A, (__v8hi)__B);
+}
+
+static __inline __m128i __attribute__((__gnu_inline__, __always_inline__, __artificial__))
+_mm_unpacklo_epi32(__m128i __A, __m128i __B)
+{
+  return (__m128i)__builtin_ia32_punpckldq128((__v4si)__A, (__v4si)__B);
+}
+
+static __inline __m128i __attribute__((__gnu_inline__, __always_inline__, __artificial__))
+_mm_unpackhi_epi32(__m128i __A, __m128i __B)
+{
+  return (__m128i)__builtin_ia32_punpckhdq128((__v4si)__A, (__v4si)__B);
+}
+
+static __inline __m128i __attribute__((__gnu_inline__, __always_inline__, __artificial__))
+_mm_unpacklo_epi64(__m128i __A, __m128i __B)
+{
+  return (__m128i)__builtin_ia32_punpcklqdq128((__v2di)__A, (__v2di)__B);
+}
+
+static __inline __m128i __attribute__((__gnu_inline__, __always_inline__, __artificial__))
+_mm_unpackhi_epi64(__m128i __A, __m128i __B)
+{
+  return (__m128i)__builtin_ia32_punpckhqdq128((__v2di)__A, (__v2di)__B);
+}
 
 static void swap(uint16_t* a, uint16_t* b) {
   uint16_t temp = *a;
@@ -210,64 +370,70 @@ static void transpose8x8SSE2_diagonal(uint16_t* matrix_src, size_t width) {
   _mm_storeu_si128((__m128i*) & matrix_src[width * 7], row7);
 }
 
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#include <sys/mman.h>
+static const void* const MemoryMapFile_Input(const int fd, const size_t fileSize) {
+  const void* const mappedFile = mmap(NULL, fileSize, PROT_READ, MAP_PRIVATE, fd, 0);
+  if (mappedFile == MAP_FAILED) {
+    if (PRINT_ERRORS)
+      write(1, "mmap\n", 5);
+    _exit(1);
+  }
+  return mappedFile;
+}
 
+static void* const MemoryMapFile_Output(const int fd, const size_t fileSize) {
 
-static void* MemoryMapFile_Input(int fd, size_t* fileSize) {
-
-  // Get the file size
-  struct stat fileStat;
-  if (fstat(fd, &fileStat) == -1) {
-    write(1, "fstat\n", 6);
+  if (ftruncate(fd, fileSize) == -1) {
+    if (PRINT_ERRORS)
+      write(1, "ftruncate\n", 10);
     _exit(1);
   }
 
-  *fileSize = (size_t)fileStat.st_size;
-    
-  // Map the file into memory
-  void* mappedFile = mmap(NULL, *fileSize, PROT_READ, MAP_PRIVATE, fd, 0);
-
-  // Close the file descriptor, leaving the mapping active
-  close(fd);
+  void* const mappedFile = mmap(NULL, fileSize, PROT_WRITE, MAP_SHARED, fd, 0);
 
   if (mappedFile == MAP_FAILED) {
-    write(1, "MAP_FAILED\n", 11);
+    if (PRINT_ERRORS)
+      write(1, "mmap\n", 5);
     _exit(1);
   }
 
   return mappedFile;
 }
 
-
 static void transpose_image(int fd_in, int fd_out) {
 
+  struct HEADER {
+    uint32_t width32;
+    uint32_t height32;
+  } header;
+
   // Read header (image dimensions)
-  uint32_t width32, height32;
-  if (read(fd_in, &width32, sizeof(uint32_t)) != sizeof(uint32_t) ||
-    read(fd_in, &height32, sizeof(uint32_t)) != sizeof(uint32_t)) {
-    write(1, "readsize\n", 9);
+  const size_t read_bytes = read(fd_in, &header, sizeof(header));
+  if (read_bytes != sizeof(header)) {
+    if (PRINT_ERRORS)
+      write(1, "readsize\n", 9);
     _exit(1);
   }
   
-  // Write header (image dimensions)
-  write(fd_out, &height32, sizeof(uint32_t));
-  write(fd_out, &width32, sizeof(uint32_t));
-
-  const size_t width = width32;
-  const size_t height = height32;
+  const size_t width = header.width32;
+  const size_t height = header.height32;
 
   const size_t total_pixels = width * height;
-  const void* output_malloc = sbrk(total_pixels * sizeof(uint16_t) + 31);
-  uint16_t* output_pixels = (uint16_t*)(((uintptr_t)output_malloc + 31) & ~((uintptr_t)31));
+  const size_t data_to_write = 2 * sizeof(uint32_t) + total_pixels * sizeof(uint16_t);
+
 
   if (width == height) {
     // square matrix
     // transpose in-place
 
-    read(fd_in, output_pixels, sizeof(uint16_t) * total_pixels);
+    void* const output_malloc = sbrk(data_to_write + 2 * 4096llu);
+
+    // output_pixels have to be aligned
+    uint16_t* output_pixels = (uint16_t*)(((uintptr_t)output_malloc + 4096llu + 4095llu) & ~((uintptr_t)4095llu));
+    uint32_t* const output_buffer = (uint32_t*)(output_pixels)-2llu;
+    output_buffer[0] = header.height32;
+    output_buffer[1] = header.width32;
+
+    read(fd_in, output_pixels, sizeof(uint16_t)* total_pixels);
 
     if ((width & 7) == 0) {
       // square matrix, width and height are multiple of 8 
@@ -288,7 +454,6 @@ static void transpose_image(int fd_in, int fd_out) {
         }
       }
 
-      write(fd_out, output_pixels, sizeof(uint16_t) * total_pixels);
     }
     else {
       // square matrix, width and height are not multiple of 8
@@ -344,15 +509,27 @@ static void transpose_image(int fd_in, int fd_out) {
         }
       }
 
-      write(fd_out, output_pixels, sizeof(uint16_t) * total_pixels);
     }
+    ssize_t bytes_written = write(fd_out, output_buffer, data_to_write);
+    if (bytes_written < 0) {
+      if (PRINT_ERRORS)
+        write(1, "write\n", 6);
+      _exit(1);
+    }
+    close(fd_out);
   }
   else {
     // generic matrix
     // transpose by copying
 
-    size_t fileSize = 0;
-    void* mappedFile_in = MemoryMapFile_Input(fd_in, &fileSize);
+    void* const mappedFile_out = MemoryMapFile_Output(fd_out, data_to_write);
+
+    uint32_t* const output_buffer = (uint32_t*)mappedFile_out;
+    output_buffer[0] = header.height32;
+    output_buffer[1] = header.width32;
+    uint16_t* const output_pixels = (uint16_t*)(output_buffer + 2);
+
+    const void* const mappedFile_in = MemoryMapFile_Input(fd_in, data_to_write);
 
     uint16_t* const input_pixels = (uint16_t*)(mappedFile_in) + 4;
 
@@ -404,36 +581,40 @@ static void transpose_image(int fd_in, int fd_out) {
       }
     }
 
-    munmap(mappedFile_in, fileSize);
-    write(fd_out, output_pixels, sizeof(uint16_t) * total_pixels);
+    if (munmap(mappedFile_out, data_to_write) == -1) {
+      if (PRINT_ERRORS)
+        write(1, "munmap\n", 7);
+      _exit(1);
+    }
   }
 }
 
 int main(int argc, char* argv[]) {
   if (argc != 3) {
-    write(1, "argc\n", 5);
+    if (PRINT_ERRORS)
+      write(1, "argc\n", 5);
     _exit(1);
   }
 
-  char* input_file = argv[1];
-  char* output_file = argv[2];
+  const char* const input_file = argv[1];
+  const char* const output_file = argv[2];
 
   // Open the file
-  int fd_in = open(input_file, O_RDONLY);
+  const int fd_in = open(input_file, O_RDONLY, 0);
   if (fd_in == -1) {
-    write(1, "fd_in\n", 6);
+    if (PRINT_ERRORS)
+      write(1, "fd_in\n", 6);
     _exit(1);
   }
 
-  int fd_out = open(output_file, O_WRONLY | O_CREAT, 0644);
+  const int fd_out = open(output_file, O_RDWR | O_CREAT, 0644);
   if (fd_out == -1) {
-    write(1, "fd_out\n", 7);
+    if (PRINT_ERRORS)
+      write(1, "fd_out\n", 7);
     _exit(1);
   }
 
-  transpose_image(fd_in, fd_out); 
+  transpose_image(fd_in, fd_out);
 
-  close(fd_in);
-  close(fd_out);
   _exit(0);
 }
