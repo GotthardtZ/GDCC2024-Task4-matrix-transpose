@@ -168,7 +168,7 @@ static void swap(uint16_t* a, uint16_t* b) {
   *b = temp;
 }
 
-static void transpose8x8SSE2_inplace(uint16_t* matrix_src, uint16_t* matrix_dst, size_t width) {
+  static void transpose8x8SSE2_inplace(uint16_t* const matrix_src, uint16_t* const matrix_dst, const size_t width) {
   // Load rows of the matrix into SSE registers
   __m128i row0 = _mm_loadu_si128((__m128i*) & matrix_src[0]);  // Row 0
   __m128i row1 = _mm_loadu_si128((__m128i*) & matrix_src[width]);  // Row 1
@@ -268,7 +268,7 @@ static void transpose8x8SSE2_inplace(uint16_t* matrix_src, uint16_t* matrix_dst,
   _mm_storeu_si128((__m128i*) & matrix_src[width * 7], row7x);
 }
 
-static void transpose8x8SSE2_outofplace(uint16_t* matrix_src, uint16_t* matrix_dst, size_t width, size_t height) {
+static void transpose8x8SSE2_outofplace(const uint16_t* const matrix_src, uint16_t* const matrix_dst, const size_t width, const size_t height) {
   // Load rows of the matrix into SSE registers
   __m128i row0 = _mm_loadu_si128((__m128i*) & matrix_src[0]);  // Row 0
   __m128i row1 = _mm_loadu_si128((__m128i*) & matrix_src[width]);  // Row 1
@@ -319,7 +319,7 @@ static void transpose8x8SSE2_outofplace(uint16_t* matrix_src, uint16_t* matrix_d
   _mm_storeu_si128((__m128i*) & matrix_dst[height * 7], row7);
 }
 
-static void transpose8x8SSE2_diagonal(uint16_t* matrix_src, size_t width) {
+static void transpose8x8SSE2_diagonal(uint16_t* const matrix_src, const size_t width) {
   // Load rows of the matrix into SSE registers
   __m128i row0 = _mm_loadu_si128((__m128i*) & matrix_src[0]);  // Row 0
   __m128i row1 = _mm_loadu_si128((__m128i*) & matrix_src[width]);  // Row 1
@@ -399,7 +399,7 @@ static void* const MemoryMapFile_Output(const int fd, const size_t fileSize) {
   return mappedFile;
 }
 
-static void transpose_image(int fd_in, int fd_out) {
+static void transpose_image(const int fd_in, const int fd_out) {
 
   struct HEADER {
     uint32_t width32;
@@ -438,19 +438,19 @@ static void transpose_image(int fd_in, int fd_out) {
     if ((width & 7) == 0) {
       // square matrix, width and height are multiple of 8 
 
-      for (size_t source_row = 0; source_row < height; source_row+=8) {
+      for (size_t source_row = 0; source_row < height; source_row += 8) {
         size_t source_col = source_row;
         size_t source_index = source_row * width + source_col;
         size_t target_index = source_index;
         transpose8x8SSE2_diagonal(&output_pixels[source_index], width);
-        target_index += width * 8;
-        source_index += 8;
         source_col += 8;
+        source_index += 8;
+        target_index += width * 8;
 
-        for (; source_col < width; source_col+=8) {
+        for (; source_col < width; source_col += 8) {
           transpose8x8SSE2_inplace(&output_pixels[source_index], &output_pixels[target_index], width);
-          target_index += width*8;
-          source_index+=8;
+          source_index += 8;
+          target_index += width * 8;
         }
       }
 
@@ -459,7 +459,7 @@ static void transpose_image(int fd_in, int fd_out) {
       // square matrix, width and height are not multiple of 8
 
       size_t source_row = 0;
-      for (; source_row + 8 <= height; source_row += 8) {
+      while (source_row + 8 <= height) {
         size_t source_col = source_row;
         size_t source_index = source_row * width + source_col;
         size_t target_index = source_index;
@@ -478,29 +478,23 @@ static void transpose_image(int fd_in, int fd_out) {
 
         // finish the last rectangle in this source row
         for (size_t row_idx = 0; row_idx < 8; row_idx++) {
-          size_t source_col0 = source_col;
-          size_t source_row0 = source_row + row_idx;
-          source_index = source_row0 * width + source_col0;
-          size_t target_row0 = source_col0;
-          size_t target_col0 = source_row0;
-          target_index = target_row0 * width + target_col0;
-          while (source_col0 < width) {
+          source_index = source_row * width + source_col;
+          target_index = source_col/*target row*/ * width + source_row /*target_col*/;
+          for (size_t source_col0 = source_col; source_col0 < width;) {
             swap(&output_pixels[source_index], &output_pixels[target_index]);
             source_col0++;
             source_index++;
             target_index += width;
           }
+          source_row++;
         }
-
       }
 
       // finish the last diagonal square (bottom right)
       for (; source_row < height; source_row++) {
         size_t source_col = source_row + 1; // skip diagonal
         size_t source_index = source_row * width + source_col;
-        size_t target_row = source_col;
-        size_t target_col = source_row;
-        size_t target_index = target_row * width + target_col;
+        size_t target_index = source_col /*target_row*/ * width + source_row /*target_col*/;
         while (source_col < width) {
           swap(&output_pixels[source_index], &output_pixels[target_index]);
           source_index++;
@@ -529,17 +523,14 @@ static void transpose_image(int fd_in, int fd_out) {
     output_buffer[1] = header.width32;
     uint16_t* const output_pixels = (uint16_t*)(output_buffer + 2);
 
-    const void* const mappedFile_in = MemoryMapFile_Input(fd_in, data_to_write);
-
-    uint16_t* const input_pixels = (uint16_t*)(mappedFile_in) + 4;
+    const uint16_t* input_pixels = MemoryMapFile_Input(fd_in, data_to_write);
+    input_pixels += 4;
 
     size_t source_row = 0;
     for (; source_row + 8 <= height; source_row += 8) {
+      size_t source_index = source_row * width;
+      size_t target_index = source_row;
       size_t source_col = 0;
-      size_t source_index = source_row * width + source_col;
-      size_t target_row = source_col;
-      size_t target_col = source_row;
-      size_t target_index = target_row * height /*target width*/ + target_col;
       while (source_col + 8 <= width) {
         transpose8x8SSE2_outofplace(&input_pixels[source_index], &output_pixels[target_index], width, height);
         source_col += 8;
@@ -614,7 +605,7 @@ int main(int argc, char* argv[]) {
     _exit(1);
   }
 
-  transpose_image(fd_in, fd_out);
+  transpose_image(fd_in, fd_out); 
 
   _exit(0);
 }
