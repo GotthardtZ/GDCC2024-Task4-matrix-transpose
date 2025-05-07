@@ -2,6 +2,14 @@
 
 #include <stdint.h> // for uint16_t, uint32_t, uintptr_t
 
+#ifdef _MSC_VER
+#define ALWAYS_INLINE __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+#define ALWAYS_INLINE __attribute__((always_inline)) inline
+#else
+#define ALWAYS_INLINE inline
+#endif
+
 #define false 0
 #define true  1
 
@@ -168,16 +176,22 @@ static void swap(uint16_t* a, uint16_t* b) {
   *b = temp;
 }
 
-  static void transpose8x8SSE2_inplace(uint16_t* const matrix_src, uint16_t* const matrix_dst, const size_t width) {
+ALWAYS_INLINE static void transpose8x8SSE2_inplace(const uint16_t* const matrix, const size_t offset_src, const size_t offset_dst, const size_t width) {
   // Load rows of the matrix into SSE registers
-  __m128i row0 = _mm_loadu_si128((__m128i*) & matrix_src[0]);  // Row 0
-  __m128i row1 = _mm_loadu_si128((__m128i*) & matrix_src[width]);  // Row 1
-  __m128i row2 = _mm_loadu_si128((__m128i*) & matrix_src[width*2]); // Row 2
-  __m128i row3 = _mm_loadu_si128((__m128i*) & matrix_src[width*3]); // Row 3
-  __m128i row4 = _mm_loadu_si128((__m128i*) & matrix_src[width*4]); // Row 4
-  __m128i row5 = _mm_loadu_si128((__m128i*) & matrix_src[width*5]); // Row 5
-  __m128i row6 = _mm_loadu_si128((__m128i*) & matrix_src[width*6]); // Row 6
-  __m128i row7 = _mm_loadu_si128((__m128i*) & matrix_src[width*7]); // Row 7
+  const uint16_t* const idx0 = &matrix[0];
+  const size_t width2 = 2 * width;
+  const uint16_t* const idx2 = idx0 + width2;
+  const uint16_t* const idx4 = idx0 + 2 * width2;
+  const uint16_t* const idx6 = idx2 + 2 * width2;
+
+  __m128i row0 = _mm_loadu_si128((__m128i*) & idx0[offset_src]);  // Row 0
+  __m128i row1 = _mm_loadu_si128((__m128i*) & idx0[offset_src + width]);  // Row 1
+  __m128i row2 = _mm_loadu_si128((__m128i*) & idx2[offset_src]); // Row 2
+  __m128i row3 = _mm_loadu_si128((__m128i*) & idx2[offset_src + width]); // Row 3
+  __m128i row4 = _mm_loadu_si128((__m128i*) & idx4[offset_src]); // Row 4
+  __m128i row5 = _mm_loadu_si128((__m128i*) & idx4[offset_src + width]); // Row 5
+  __m128i row6 = _mm_loadu_si128((__m128i*) & idx6[offset_src]); // Row 6
+  __m128i row7 = _mm_loadu_si128((__m128i*) & idx6[offset_src + width]); // Row 7
 
   // Transpose step 1: Unpack 16-bit elements (interleave within pairs of rows)
   __m128i t0 = _mm_unpacklo_epi16(row0, row1);
@@ -209,14 +223,14 @@ static void swap(uint16_t* a, uint16_t* b) {
   row6 = _mm_unpacklo_epi64(tt3, tt7);
   row7 = _mm_unpackhi_epi64(tt3, tt7);
 
-  __m128i row0x = _mm_loadu_si128((__m128i*) & matrix_dst[0]);  // Row 0
-  __m128i row1x = _mm_loadu_si128((__m128i*) & matrix_dst[width]);  // Row 1
-  __m128i row2x = _mm_loadu_si128((__m128i*) & matrix_dst[width * 2]); // Row 2
-  __m128i row3x = _mm_loadu_si128((__m128i*) & matrix_dst[width * 3]); // Row 3
-  __m128i row4x = _mm_loadu_si128((__m128i*) & matrix_dst[width * 4]); // Row 4
-  __m128i row5x = _mm_loadu_si128((__m128i*) & matrix_dst[width * 5]); // Row 5
-  __m128i row6x = _mm_loadu_si128((__m128i*) & matrix_dst[width * 6]); // Row 6
-  __m128i row7x = _mm_loadu_si128((__m128i*) & matrix_dst[width * 7]); // Row 7
+  __m128i row0x = _mm_loadu_si128((__m128i*) & idx0[offset_dst]);  // Row 0
+  __m128i row1x = _mm_loadu_si128((__m128i*) & idx0[offset_dst + width]);  // Row 1
+  __m128i row2x = _mm_loadu_si128((__m128i*) & idx2[offset_dst]); // Row 2
+  __m128i row3x = _mm_loadu_si128((__m128i*) & idx2[offset_dst + width]); // Row 3
+  __m128i row4x = _mm_loadu_si128((__m128i*) & idx4[offset_dst]); // Row 4
+  __m128i row5x = _mm_loadu_si128((__m128i*) & idx4[offset_dst + width]); // Row 5
+  __m128i row6x = _mm_loadu_si128((__m128i*) & idx6[offset_dst]); // Row 6
+  __m128i row7x = _mm_loadu_si128((__m128i*) & idx6[offset_dst + width]); // Row 7
 
   // Transpose step 1: Unpack 16-bit elements (interleave within pairs of rows)
   __m128i t0x = _mm_unpacklo_epi16(row0x, row1x);
@@ -249,86 +263,50 @@ static void swap(uint16_t* a, uint16_t* b) {
   row7x = _mm_unpackhi_epi64(tt3x, tt7x);
 
   // Store the transposed rows back into the matrix
-  _mm_storeu_si128((__m128i*) & matrix_dst[0], row0);
-  _mm_storeu_si128((__m128i*) & matrix_dst[width], row1);
-  _mm_storeu_si128((__m128i*) & matrix_dst[width*2], row2);
-  _mm_storeu_si128((__m128i*) & matrix_dst[width*3], row3);
-  _mm_storeu_si128((__m128i*) & matrix_dst[width*4], row4);
-  _mm_storeu_si128((__m128i*) & matrix_dst[width*5], row5);
-  _mm_storeu_si128((__m128i*) & matrix_dst[width*6], row6);
-  _mm_storeu_si128((__m128i*) & matrix_dst[width*7], row7);
+  _mm_storeu_si128((__m128i*) & idx0[offset_dst], row0);
+  _mm_storeu_si128((__m128i*) & idx0[offset_dst + width], row1);
+  _mm_storeu_si128((__m128i*) & idx2[offset_dst], row2);
+  _mm_storeu_si128((__m128i*) & idx2[offset_dst + width], row3);
+  _mm_storeu_si128((__m128i*) & idx4[offset_dst], row4);
+  _mm_storeu_si128((__m128i*) & idx4[offset_dst + width], row5);
+  _mm_storeu_si128((__m128i*) & idx6[offset_dst], row6);
+  _mm_storeu_si128((__m128i*) & idx6[offset_dst + width], row7);
 
-  _mm_storeu_si128((__m128i*) & matrix_src[0], row0x);
-  _mm_storeu_si128((__m128i*) & matrix_src[width], row1x);
-  _mm_storeu_si128((__m128i*) & matrix_src[width * 2], row2x);
-  _mm_storeu_si128((__m128i*) & matrix_src[width * 3], row3x);
-  _mm_storeu_si128((__m128i*) & matrix_src[width * 4], row4x);
-  _mm_storeu_si128((__m128i*) & matrix_src[width * 5], row5x);
-  _mm_storeu_si128((__m128i*) & matrix_src[width * 6], row6x);
-  _mm_storeu_si128((__m128i*) & matrix_src[width * 7], row7x);
+  _mm_storeu_si128((__m128i*) & idx0[offset_src], row0x);
+  _mm_storeu_si128((__m128i*) & idx0[offset_src + width], row1x);
+  _mm_storeu_si128((__m128i*) & idx2[offset_src], row2x);
+  _mm_storeu_si128((__m128i*) & idx2[offset_src + width], row3x);
+  _mm_storeu_si128((__m128i*) & idx4[offset_src], row4x);
+  _mm_storeu_si128((__m128i*) & idx4[offset_src + width], row5x);
+  _mm_storeu_si128((__m128i*) & idx6[offset_src], row6x);
+  _mm_storeu_si128((__m128i*) & idx6[offset_src + width], row7x);
 }
 
-static void transpose8x8SSE2_outofplace(const uint16_t* const matrix_src, uint16_t* const matrix_dst, const size_t width, const size_t height) {
+
+ALWAYS_INLINE static void transpose8x8SSE2_outofplace(const uint16_t* const matrix_src, const size_t offset_src, uint16_t* const matrix_dst, const size_t offset_dst, const size_t width, const size_t height) {
   // Load rows of the matrix into SSE registers
-  __m128i row0 = _mm_loadu_si128((__m128i*) & matrix_src[0]);  // Row 0
-  __m128i row1 = _mm_loadu_si128((__m128i*) & matrix_src[width]);  // Row 1
-  __m128i row2 = _mm_loadu_si128((__m128i*) & matrix_src[width * 2]); // Row 2
-  __m128i row3 = _mm_loadu_si128((__m128i*) & matrix_src[width * 3]); // Row 3
-  __m128i row4 = _mm_loadu_si128((__m128i*) & matrix_src[width * 4]); // Row 4
-  __m128i row5 = _mm_loadu_si128((__m128i*) & matrix_src[width * 5]); // Row 5
-  __m128i row6 = _mm_loadu_si128((__m128i*) & matrix_src[width * 6]); // Row 6
-  __m128i row7 = _mm_loadu_si128((__m128i*) & matrix_src[width * 7]); // Row 7
 
-  // Transpose step 1: Unpack 16-bit elements (interleave within pairs of rows)
-  __m128i t0 = _mm_unpacklo_epi16(row0, row1);
-  __m128i t1 = _mm_unpackhi_epi16(row0, row1);
-  __m128i t2 = _mm_unpacklo_epi16(row2, row3);
-  __m128i t3 = _mm_unpackhi_epi16(row2, row3);
-  __m128i t4 = _mm_unpacklo_epi16(row4, row5);
-  __m128i t5 = _mm_unpackhi_epi16(row4, row5);
-  __m128i t6 = _mm_unpacklo_epi16(row6, row7);
-  __m128i t7 = _mm_unpackhi_epi16(row6, row7);
+  const uint16_t* const src0 = &matrix_src[0];
+  const size_t width2 = 2 * width;
+  const uint16_t* const src2 = src0 + width2;
+  const uint16_t* const src4 = src0 + 2 * width2;
+  const uint16_t* const src6 = src2 + 2 * width2;
 
-  // Transpose step 2: Unpack 32-bit elements (interleave pairs of 16-bit results)
-  __m128i tt0 = _mm_unpacklo_epi32(t0, t2);
-  __m128i tt1 = _mm_unpackhi_epi32(t0, t2);
-  __m128i tt2 = _mm_unpacklo_epi32(t1, t3);
-  __m128i tt3 = _mm_unpackhi_epi32(t1, t3);
-  __m128i tt4 = _mm_unpacklo_epi32(t4, t6);
-  __m128i tt5 = _mm_unpackhi_epi32(t4, t6);
-  __m128i tt6 = _mm_unpacklo_epi32(t5, t7);
-  __m128i tt7 = _mm_unpackhi_epi32(t5, t7);
+  const uint16_t* const dst0 = &matrix_dst[0];
+  const size_t height2 = 2 * height;
+  const uint16_t* const dst2 = dst0 + height2;
+  const uint16_t* const dst4 = dst0 + 2 * height2;
+  const uint16_t* const dst6 = dst2 + 2 * height2;
 
-  // Transpose step 3: Unpack 64-bit elements (final interleave step)
-  row0 = _mm_unpacklo_epi64(tt0, tt4);
-  row1 = _mm_unpackhi_epi64(tt0, tt4);
-  row2 = _mm_unpacklo_epi64(tt1, tt5);
-  row3 = _mm_unpackhi_epi64(tt1, tt5);
-  row4 = _mm_unpacklo_epi64(tt2, tt6);
-  row5 = _mm_unpackhi_epi64(tt2, tt6);
-  row6 = _mm_unpacklo_epi64(tt3, tt7);
-  row7 = _mm_unpackhi_epi64(tt3, tt7);
-    
-  _mm_storeu_si128((__m128i*) & matrix_dst[0], row0);
-  _mm_storeu_si128((__m128i*) & matrix_dst[height], row1);
-  _mm_storeu_si128((__m128i*) & matrix_dst[height * 2], row2);
-  _mm_storeu_si128((__m128i*) & matrix_dst[height * 3], row3);
-  _mm_storeu_si128((__m128i*) & matrix_dst[height * 4], row4);
-  _mm_storeu_si128((__m128i*) & matrix_dst[height * 5], row5);
-  _mm_storeu_si128((__m128i*) & matrix_dst[height * 6], row6);
-  _mm_storeu_si128((__m128i*) & matrix_dst[height * 7], row7);
-}
+  __m128i row0 = _mm_loadu_si128((__m128i*) & src0[offset_src]);  // Row 0
+  __m128i row1 = _mm_loadu_si128((__m128i*) & src0[offset_src + width]);  // Row 1
+  __m128i row2 = _mm_loadu_si128((__m128i*) & src2[offset_src]); // Row 2
+  __m128i row3 = _mm_loadu_si128((__m128i*) & src2[offset_src + width]); // Row 3
+  __m128i row4 = _mm_loadu_si128((__m128i*) & src4[offset_src]); // Row 4
+  __m128i row5 = _mm_loadu_si128((__m128i*) & src4[offset_src + width]); // Row 5
+  __m128i row6 = _mm_loadu_si128((__m128i*) & src6[offset_src]); // Row 6
+  __m128i row7 = _mm_loadu_si128((__m128i*) & src6[offset_src + width]); // Row 7
 
-static void transpose8x8SSE2_diagonal(uint16_t* const matrix_src, const size_t width) {
-  // Load rows of the matrix into SSE registers
-  __m128i row0 = _mm_loadu_si128((__m128i*) & matrix_src[0]);  // Row 0
-  __m128i row1 = _mm_loadu_si128((__m128i*) & matrix_src[width]);  // Row 1
-  __m128i row2 = _mm_loadu_si128((__m128i*) & matrix_src[width * 2]); // Row 2
-  __m128i row3 = _mm_loadu_si128((__m128i*) & matrix_src[width * 3]); // Row 3
-  __m128i row4 = _mm_loadu_si128((__m128i*) & matrix_src[width * 4]); // Row 4
-  __m128i row5 = _mm_loadu_si128((__m128i*) & matrix_src[width * 5]); // Row 5
-  __m128i row6 = _mm_loadu_si128((__m128i*) & matrix_src[width * 6]); // Row 6
-  __m128i row7 = _mm_loadu_si128((__m128i*) & matrix_src[width * 7]); // Row 7
 
   // Transpose step 1: Unpack 16-bit elements (interleave within pairs of rows)
   __m128i t0 = _mm_unpacklo_epi16(row0, row1);
@@ -360,14 +338,71 @@ static void transpose8x8SSE2_diagonal(uint16_t* const matrix_src, const size_t w
   row6 = _mm_unpacklo_epi64(tt3, tt7);
   row7 = _mm_unpackhi_epi64(tt3, tt7);
 
-  _mm_storeu_si128((__m128i*) & matrix_src[0], row0);
-  _mm_storeu_si128((__m128i*) & matrix_src[width], row1);
-  _mm_storeu_si128((__m128i*) & matrix_src[width * 2], row2);
-  _mm_storeu_si128((__m128i*) & matrix_src[width * 3], row3);
-  _mm_storeu_si128((__m128i*) & matrix_src[width * 4], row4);
-  _mm_storeu_si128((__m128i*) & matrix_src[width * 5], row5);
-  _mm_storeu_si128((__m128i*) & matrix_src[width * 6], row6);
-  _mm_storeu_si128((__m128i*) & matrix_src[width * 7], row7);
+  _mm_storeu_si128((__m128i*) & dst0[offset_dst], row0);
+  _mm_storeu_si128((__m128i*) & dst0[offset_dst + height], row1);
+  _mm_storeu_si128((__m128i*) & dst2[offset_dst], row2);
+  _mm_storeu_si128((__m128i*) & dst2[offset_dst + height], row3);
+  _mm_storeu_si128((__m128i*) & dst4[offset_dst], row4);
+  _mm_storeu_si128((__m128i*) & dst4[offset_dst + height], row5);
+  _mm_storeu_si128((__m128i*) & dst6[offset_dst], row6);
+  _mm_storeu_si128((__m128i*) & dst6[offset_dst + height], row7);
+}
+
+ALWAYS_INLINE static void transpose8x8SSE2_diagonal(uint16_t* const matrix_src, const size_t offset_src, const size_t width) {
+  // Load rows of the matrix into SSE registers
+  const uint16_t* const src0 = &matrix_src[0];
+  const size_t width2 = 2 * width;
+  const uint16_t* const src2 = src0 + width2;
+  const uint16_t* const src4 = src0 + 2 * width2;
+  const uint16_t* const src6 = src2 + 2 * width2;
+
+  __m128i row0 = _mm_loadu_si128((__m128i*) & src0[offset_src]);  // Row 0
+  __m128i row1 = _mm_loadu_si128((__m128i*) & src0[offset_src + width]);  // Row 1
+  __m128i row2 = _mm_loadu_si128((__m128i*) & src2[offset_src]); // Row 2
+  __m128i row3 = _mm_loadu_si128((__m128i*) & src2[offset_src + width]); // Row 3
+  __m128i row4 = _mm_loadu_si128((__m128i*) & src4[offset_src]); // Row 4
+  __m128i row5 = _mm_loadu_si128((__m128i*) & src4[offset_src + width]); // Row 5
+  __m128i row6 = _mm_loadu_si128((__m128i*) & src6[offset_src]); // Row 6
+  __m128i row7 = _mm_loadu_si128((__m128i*) & src6[offset_src + width]); // Row 7
+
+  // Transpose step 1: Unpack 16-bit elements (interleave within pairs of rows)
+  __m128i t0 = _mm_unpacklo_epi16(row0, row1);
+  __m128i t1 = _mm_unpackhi_epi16(row0, row1);
+  __m128i t2 = _mm_unpacklo_epi16(row2, row3);
+  __m128i t3 = _mm_unpackhi_epi16(row2, row3);
+  __m128i t4 = _mm_unpacklo_epi16(row4, row5);
+  __m128i t5 = _mm_unpackhi_epi16(row4, row5);
+  __m128i t6 = _mm_unpacklo_epi16(row6, row7);
+  __m128i t7 = _mm_unpackhi_epi16(row6, row7);
+
+  // Transpose step 2: Unpack 32-bit elements (interleave pairs of 16-bit results)
+  __m128i tt0 = _mm_unpacklo_epi32(t0, t2);
+  __m128i tt1 = _mm_unpackhi_epi32(t0, t2);
+  __m128i tt2 = _mm_unpacklo_epi32(t1, t3);
+  __m128i tt3 = _mm_unpackhi_epi32(t1, t3);
+  __m128i tt4 = _mm_unpacklo_epi32(t4, t6);
+  __m128i tt5 = _mm_unpackhi_epi32(t4, t6);
+  __m128i tt6 = _mm_unpacklo_epi32(t5, t7);
+  __m128i tt7 = _mm_unpackhi_epi32(t5, t7);
+
+  // Transpose step 3: Unpack 64-bit elements (final interleave step)
+  row0 = _mm_unpacklo_epi64(tt0, tt4);
+  row1 = _mm_unpackhi_epi64(tt0, tt4);
+  row2 = _mm_unpacklo_epi64(tt1, tt5);
+  row3 = _mm_unpackhi_epi64(tt1, tt5);
+  row4 = _mm_unpacklo_epi64(tt2, tt6);
+  row5 = _mm_unpackhi_epi64(tt2, tt6);
+  row6 = _mm_unpacklo_epi64(tt3, tt7);
+  row7 = _mm_unpackhi_epi64(tt3, tt7);
+
+  _mm_storeu_si128((__m128i*) & src0[offset_src], row0);
+  _mm_storeu_si128((__m128i*) & src0[offset_src + width], row1);
+  _mm_storeu_si128((__m128i*) & src2[offset_src], row2);
+  _mm_storeu_si128((__m128i*) & src2[offset_src + width], row3);
+  _mm_storeu_si128((__m128i*) & src4[offset_src], row4);
+  _mm_storeu_si128((__m128i*) & src4[offset_src + width], row5);
+  _mm_storeu_si128((__m128i*) & src6[offset_src], row6);
+  _mm_storeu_si128((__m128i*) & src6[offset_src + width], row7);
 }
 
 static const void* const MemoryMapFile_Input(const int fd, const size_t fileSize) {
@@ -425,7 +460,7 @@ static void transpose_image(const int fd_in, const int fd_out) {
     // square matrix
     // transpose in-place
 
-    void* const output_malloc = sbrk(data_to_write + 2 * 4096llu);
+    void* const output_malloc = sbrk(data_to_write + 2 * 4096llu); // [.... header | aligned pixel data | ...padding]
 
     // output_pixels have to be aligned
     uint16_t* output_pixels = (uint16_t*)(((uintptr_t)output_malloc + 4096llu + 4095llu) & ~((uintptr_t)4095llu));
@@ -442,13 +477,13 @@ static void transpose_image(const int fd_in, const int fd_out) {
         size_t source_col = source_row;
         size_t source_index = source_row * width + source_col;
         size_t target_index = source_index;
-        transpose8x8SSE2_diagonal(&output_pixels[source_index], width);
+        transpose8x8SSE2_diagonal(&output_pixels[0], source_index, width);
         source_col += 8;
         source_index += 8;
         target_index += width * 8;
 
         for (; source_col < width; source_col += 8) {
-          transpose8x8SSE2_inplace(&output_pixels[source_index], &output_pixels[target_index], width);
+          transpose8x8SSE2_inplace(&output_pixels[0], source_index, target_index, width);
           source_index += 8;
           target_index += width * 8;
         }
@@ -459,18 +494,18 @@ static void transpose_image(const int fd_in, const int fd_out) {
       // square matrix, width and height are not multiple of 8
 
       size_t source_row = 0;
-      while (source_row + 8 <= height) {
+      while (source_row <= height - 8) {
         size_t source_col = source_row;
         size_t source_index = source_row * width + source_col;
         size_t target_index = source_index;
 
-        transpose8x8SSE2_diagonal(&output_pixels[source_index], width);
+        transpose8x8SSE2_diagonal(&output_pixels[0], source_index, width);
         source_col += 8;
         source_index += 8;
         target_index += width * 8;
 
-        while (source_col + 8 <= width) {
-          transpose8x8SSE2_inplace(&output_pixels[source_index], &output_pixels[target_index], width);
+        while (source_col <= width - 8) {
+          transpose8x8SSE2_inplace(&output_pixels[0], source_index, target_index, width);
           source_col += 8;
           source_index += 8;
           target_index += width * 8;
@@ -527,12 +562,12 @@ static void transpose_image(const int fd_in, const int fd_out) {
     input_pixels += 4;
 
     size_t source_row = 0;
-    for (; source_row + 8 <= height; source_row += 8) {
+    while (source_row <= height - 8) {
       size_t source_index = source_row * width;
       size_t target_index = source_row;
       size_t source_col = 0;
-      while (source_col + 8 <= width) {
-        transpose8x8SSE2_outofplace(&input_pixels[source_index], &output_pixels[target_index], width, height);
+      while (source_col <= width - 8) {
+        transpose8x8SSE2_outofplace(&input_pixels[0], source_index, &output_pixels[0], target_index, width, height);
         source_col += 8;
         source_index += 8;
         target_index += height /*target width*/ * 8;
@@ -541,34 +576,27 @@ static void transpose_image(const int fd_in, const int fd_out) {
       // finish the last rectangle in this source row
 
       for (size_t row_idx = 0; row_idx < 8; row_idx++) {
-        size_t source_col0 = source_col;
-        size_t source_row0 = source_row + row_idx;
-        source_index = source_row0 * width + source_col0;
-        size_t target_row0 = source_col0;
-        size_t target_col0 = source_row0;
-        target_index = target_row0 * height /*target width*/ + target_col0;
-        while (source_col0 < width) {
+        source_index = source_row * width + source_col;
+        target_index = source_col /*target row*/ * height /*target width*/ + source_row /*target column*/;
+        for (size_t source_col0 = source_col; source_col0 < width;) {
           output_pixels[target_index] = input_pixels[source_index];
           source_col0++;
           source_index++;
           target_index += height /*target width*/;
         }
+        source_row++;
       }
 
     }
 
     // finish the last source rows
     for (; source_row < height; source_row++) {
-      size_t source_col = 0;
-      size_t source_index = source_row * width + source_col;
-      size_t target_row = source_col;
-      size_t target_col = source_row;
-      size_t target_index = target_row * height /*target width*/ + target_col;
-      while (source_col < width) {
+      size_t source_index = source_row * width;
+      size_t target_index = source_row;
+      for (size_t source_col = 0; source_col < width; source_col++) {
         output_pixels[target_index] = input_pixels[source_index];
         source_index++;
         target_index += height /*target width*/;
-        source_col++;
       }
     }
 
