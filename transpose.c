@@ -455,18 +455,16 @@ static void transpose_image(const int fd_in, const int fd_out) {
   const size_t total_pixels = width * height;
   const size_t data_to_write = 2 * sizeof(uint32_t) + total_pixels * sizeof(uint16_t);
 
+  void* const mappedFile_out = MemoryMapFile_Output(fd_out, data_to_write);
+
+  uint32_t* const output_buffer = (uint32_t*)mappedFile_out;
+  output_buffer[0] = header.height32;
+  output_buffer[1] = header.width32;
+  uint16_t* const output_pixels = (uint16_t*)(output_buffer + 2);
 
   if (width == height) {
     // square matrix
     // transpose in-place
-
-    void* const output_malloc = sbrk(data_to_write + 2 * 4096llu); // [.... header | aligned pixel data | ...padding]
-
-    // output_pixels have to be aligned
-    uint16_t* output_pixels = (uint16_t*)(((uintptr_t)output_malloc + 4096llu + 4095llu) & ~((uintptr_t)4095llu));
-    uint32_t* const output_buffer = (uint32_t*)(output_pixels)-2llu;
-    output_buffer[0] = header.height32;
-    output_buffer[1] = header.width32;
 
     read(fd_in, output_pixels, sizeof(uint16_t)* total_pixels);
 
@@ -539,24 +537,10 @@ static void transpose_image(const int fd_in, const int fd_out) {
       }
 
     }
-    ssize_t bytes_written = write(fd_out, output_buffer, data_to_write);
-    if (bytes_written < 0) {
-      if (PRINT_ERRORS)
-        write(1, "write\n", 6);
-      _exit(1);
-    }
-    close(fd_out);
   }
   else {
     // generic matrix
     // transpose by copying
-
-    void* const mappedFile_out = MemoryMapFile_Output(fd_out, data_to_write);
-
-    uint32_t* const output_buffer = (uint32_t*)mappedFile_out;
-    output_buffer[0] = header.height32;
-    output_buffer[1] = header.width32;
-    uint16_t* const output_pixels = (uint16_t*)(output_buffer + 2);
 
     const uint16_t* input_pixels = MemoryMapFile_Input(fd_in, data_to_write);
     input_pixels += 4;
@@ -599,12 +583,12 @@ static void transpose_image(const int fd_in, const int fd_out) {
         target_index += height /*target width*/;
       }
     }
+  }
 
-    if (munmap(mappedFile_out, data_to_write) == -1) {
-      if (PRINT_ERRORS)
-        write(1, "munmap\n", 7);
-      _exit(1);
-    }
+  if (munmap(mappedFile_out, data_to_write) == -1) {
+    if (PRINT_ERRORS)
+      write(1, "munmap\n", 7);
+    _exit(1);
   }
 }
 
@@ -633,7 +617,7 @@ int main(int argc, char* argv[]) {
     _exit(1);
   }
 
-  transpose_image(fd_in, fd_out); 
+  transpose_image(fd_in, fd_out);
 
   _exit(0);
 }
