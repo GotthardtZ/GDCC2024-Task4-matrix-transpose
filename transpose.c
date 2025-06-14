@@ -1,4 +1,4 @@
-#define PRINT_ERRORS false
+#define PRINT_ERRORS 0
 
 #include <stdint.h> // for uint16_t, uint32_t, uintptr_t
 
@@ -10,8 +10,7 @@
 #define ALWAYS_INLINE inline
 #endif
 
-#define false 0
-#define true  1
+#define STDERR_FILENO 2
 
 typedef unsigned long int size_t;
 typedef long int ssize_t;
@@ -58,12 +57,6 @@ static ssize_t write(int fd, const void* data, uintptr_t nbytes) {
   return syscall3(SYS_write, fd, (uintptr_t)data, nbytes);
 }
 
-// close
-static int close(int fd) {
-  const int SYS_close = 3;  // SYS_close syscall number on Linux
-  return (int)syscall1(SYS_close, (uintptr_t)fd);
-}
-
 // mmap
 static void* mmap(void* addr, uintptr_t length, int prot, int flags, int fd, off_t offset) {
   const int SYS_mmap = 9;  // SYS_mmap syscall number on Linux
@@ -80,17 +73,6 @@ static int ftruncate(int fd, off_t length) {
 static int munmap(void* addr, uintptr_t length) {
   const int SYS_munmap = 11;  // SYS_munmap syscall number on Linux
   return (int)syscall2(SYS_munmap, (uintptr_t)addr, length);
-}
-
-// sbrk
-static void* sbrk(intptr_t increment) {
-  const int SYS_brk = 12;  // SYS_brk syscall number on Linux
-  uintptr_t current_brk = (uintptr_t)syscall1(SYS_brk, 0); // Get current program break (top of heap)
-  if (current_brk != (uintptr_t)-1 && increment != 0) {
-    uintptr_t new_brk = current_brk + increment;
-    uintptr_t current_brk = (uintptr_t)syscall1(SYS_brk, new_brk);
-  }
-  return (void*)current_brk;
 }
 
 // _exit
@@ -176,14 +158,16 @@ static void swap(uint16_t* a, uint16_t* b) {
   *b = temp;
 }
 
-ALWAYS_INLINE static void transpose8x8SSE2_inplace(const uint16_t* const matrix, const size_t offset_src, const size_t offset_dst, const size_t width) {
-  // Load rows of the matrix into SSE registers
-  const uint16_t* const idx0 = &matrix[0];
+ALWAYS_INLINE static void transpose_8x8_SSE2_inplace(uint16_t* const matrix, const size_t offset_src, const size_t offset_dst, const size_t width) {
+  
+  // Pre-calculate offsets to decrease register pressure
+  uint16_t* const idx0 = &matrix[0];
   const size_t width2 = 2 * width;
-  const uint16_t* const idx2 = idx0 + width2;
-  const uint16_t* const idx4 = idx0 + 2 * width2;
-  const uint16_t* const idx6 = idx2 + 2 * width2;
+  uint16_t* const idx2 = idx0 + width2;
+  uint16_t* const idx4 = idx0 + 2 * width2;
+  uint16_t* const idx6 = idx2 + 2 * width2;
 
+  // Load rows of the matrix into SSE registers
   __m128i row0 = _mm_loadu_si128((__m128i*) & idx0[offset_src]);  // Row 0
   __m128i row1 = _mm_loadu_si128((__m128i*) & idx0[offset_src + width]);  // Row 1
   __m128i row2 = _mm_loadu_si128((__m128i*) & idx2[offset_src]); // Row 2
@@ -262,7 +246,7 @@ ALWAYS_INLINE static void transpose8x8SSE2_inplace(const uint16_t* const matrix,
   row6x = _mm_unpacklo_epi64(tt3x, tt7x);
   row7x = _mm_unpackhi_epi64(tt3x, tt7x);
 
-  // Store the transposed rows back into the matrix
+  // Store the transposed rows back into the matrix (swapped)
   _mm_storeu_si128((__m128i*) & idx0[offset_dst], row0);
   _mm_storeu_si128((__m128i*) & idx0[offset_dst + width], row1);
   _mm_storeu_si128((__m128i*) & idx2[offset_dst], row2);
@@ -283,21 +267,22 @@ ALWAYS_INLINE static void transpose8x8SSE2_inplace(const uint16_t* const matrix,
 }
 
 
-ALWAYS_INLINE static void transpose8x8SSE2_outofplace(const uint16_t* const matrix_src, const size_t offset_src, uint16_t* const matrix_dst, const size_t offset_dst, const size_t width, const size_t height) {
-  // Load rows of the matrix into SSE registers
+ALWAYS_INLINE static void transpose_8x8_SSE2_out_of_place(const uint16_t* const matrix_src, const size_t offset_src, uint16_t* const matrix_dst, const size_t offset_dst, const size_t width, const size_t height) {
 
+  // Pre-calculate offsets to decrease register pressure
   const uint16_t* const src0 = &matrix_src[0];
   const size_t width2 = 2 * width;
   const uint16_t* const src2 = src0 + width2;
   const uint16_t* const src4 = src0 + 2 * width2;
   const uint16_t* const src6 = src2 + 2 * width2;
 
-  const uint16_t* const dst0 = &matrix_dst[0];
+  uint16_t* const dst0 = &matrix_dst[0];
   const size_t height2 = 2 * height;
-  const uint16_t* const dst2 = dst0 + height2;
-  const uint16_t* const dst4 = dst0 + 2 * height2;
-  const uint16_t* const dst6 = dst2 + 2 * height2;
+  uint16_t* const dst2 = dst0 + height2;
+  uint16_t* const dst4 = dst0 + 2 * height2;
+  uint16_t* const dst6 = dst2 + 2 * height2;
 
+  // Load rows of the matrix into SSE registers
   __m128i row0 = _mm_loadu_si128((__m128i*) & src0[offset_src]);  // Row 0
   __m128i row1 = _mm_loadu_si128((__m128i*) & src0[offset_src + width]);  // Row 1
   __m128i row2 = _mm_loadu_si128((__m128i*) & src2[offset_src]); // Row 2
@@ -306,7 +291,6 @@ ALWAYS_INLINE static void transpose8x8SSE2_outofplace(const uint16_t* const matr
   __m128i row5 = _mm_loadu_si128((__m128i*) & src4[offset_src + width]); // Row 5
   __m128i row6 = _mm_loadu_si128((__m128i*) & src6[offset_src]); // Row 6
   __m128i row7 = _mm_loadu_si128((__m128i*) & src6[offset_src + width]); // Row 7
-
 
   // Transpose step 1: Unpack 16-bit elements (interleave within pairs of rows)
   __m128i t0 = _mm_unpacklo_epi16(row0, row1);
@@ -338,6 +322,7 @@ ALWAYS_INLINE static void transpose8x8SSE2_outofplace(const uint16_t* const matr
   row6 = _mm_unpacklo_epi64(tt3, tt7);
   row7 = _mm_unpackhi_epi64(tt3, tt7);
 
+  // Store the transposed rows to the destination matrix
   _mm_storeu_si128((__m128i*) & dst0[offset_dst], row0);
   _mm_storeu_si128((__m128i*) & dst0[offset_dst + height], row1);
   _mm_storeu_si128((__m128i*) & dst2[offset_dst], row2);
@@ -348,14 +333,16 @@ ALWAYS_INLINE static void transpose8x8SSE2_outofplace(const uint16_t* const matr
   _mm_storeu_si128((__m128i*) & dst6[offset_dst + height], row7);
 }
 
-ALWAYS_INLINE static void transpose8x8SSE2_diagonal(uint16_t* const matrix_src, const size_t offset_src, const size_t width) {
-  // Load rows of the matrix into SSE registers
-  const uint16_t* const src0 = &matrix_src[0];
-  const size_t width2 = 2 * width;
-  const uint16_t* const src2 = src0 + width2;
-  const uint16_t* const src4 = src0 + 2 * width2;
-  const uint16_t* const src6 = src2 + 2 * width2;
+ALWAYS_INLINE static void transpose_8x8_SSE2_diagonal(uint16_t* const matrix_src, const size_t offset_src, const size_t width) {
 
+  // Pre-calculate offsets to decrease register pressure
+  uint16_t* const src0 = &matrix_src[0];
+  const size_t width2 = 2 * width;
+  uint16_t* const src2 = src0 + width2;
+  uint16_t* const src4 = src0 + 2 * width2;
+  uint16_t* const src6 = src2 + 2 * width2;
+
+  // Load rows of the matrix into SSE registers
   __m128i row0 = _mm_loadu_si128((__m128i*) & src0[offset_src]);  // Row 0
   __m128i row1 = _mm_loadu_si128((__m128i*) & src0[offset_src + width]);  // Row 1
   __m128i row2 = _mm_loadu_si128((__m128i*) & src2[offset_src]); // Row 2
@@ -395,6 +382,7 @@ ALWAYS_INLINE static void transpose8x8SSE2_diagonal(uint16_t* const matrix_src, 
   row6 = _mm_unpacklo_epi64(tt3, tt7);
   row7 = _mm_unpackhi_epi64(tt3, tt7);
 
+  // Store the transposed rows back into the matrix (diagonal)
   _mm_storeu_si128((__m128i*) & src0[offset_src], row0);
   _mm_storeu_si128((__m128i*) & src0[offset_src + width], row1);
   _mm_storeu_si128((__m128i*) & src2[offset_src], row2);
@@ -405,21 +393,21 @@ ALWAYS_INLINE static void transpose8x8SSE2_diagonal(uint16_t* const matrix_src, 
   _mm_storeu_si128((__m128i*) & src6[offset_src + width], row7);
 }
 
-static const void* const MemoryMapFile_Input(const int fd, const size_t fileSize) {
+static const void* const memory_map_for_reading(const int fd, const size_t fileSize) {
   const void* const mappedFile = mmap(NULL, fileSize, PROT_READ, MAP_PRIVATE, fd, 0);
   if (mappedFile == MAP_FAILED) {
     if (PRINT_ERRORS)
-      write(1, "mmap\n", 5);
+      write(STDERR_FILENO, "mmap\n", 5);
     _exit(1);
   }
   return mappedFile;
 }
 
-static void* const MemoryMapFile_Output(const int fd, const size_t fileSize) {
+static void* const memory_map_for_writing(const int fd, const size_t fileSize) {
 
   if (ftruncate(fd, fileSize) == -1) {
     if (PRINT_ERRORS)
-      write(1, "ftruncate\n", 10);
+      write(STDERR_FILENO, "ftruncate\n", 10);
     _exit(1);
   }
 
@@ -427,7 +415,7 @@ static void* const MemoryMapFile_Output(const int fd, const size_t fileSize) {
 
   if (mappedFile == MAP_FAILED) {
     if (PRINT_ERRORS)
-      write(1, "mmap\n", 5);
+      write(STDERR_FILENO, "mmap\n", 5);
     _exit(1);
   }
 
@@ -445,7 +433,7 @@ static void transpose_image(const int fd_in, const int fd_out) {
   const size_t read_bytes = read(fd_in, &header, sizeof(header));
   if (read_bytes != sizeof(header)) {
     if (PRINT_ERRORS)
-      write(1, "readsize\n", 9);
+      write(STDERR_FILENO, "readsize\n", 9);
     _exit(1);
   }
   
@@ -453,18 +441,18 @@ static void transpose_image(const int fd_in, const int fd_out) {
   const size_t height = header.height32;
 
   const size_t total_pixels = width * height;
-  const size_t data_to_write = 2 * sizeof(uint32_t) + total_pixels * sizeof(uint16_t);
+  const size_t bytes_to_write = 2 * sizeof(uint32_t) + total_pixels * sizeof(uint16_t);
 
-  void* const mappedFile_out = MemoryMapFile_Output(fd_out, data_to_write);
+  void* const output_addr = memory_map_for_writing(fd_out, bytes_to_write);
 
-  uint32_t* const output_buffer = (uint32_t*)mappedFile_out;
+  uint32_t* const output_buffer = (uint32_t*)output_addr;
   output_buffer[0] = header.height32;
   output_buffer[1] = header.width32;
   uint16_t* const output_pixels = (uint16_t*)(output_buffer + 2);
 
   if (width == height) {
     // square matrix
-    // transpose in-place
+    // transpose in place
 
     read(fd_in, output_pixels, sizeof(uint16_t)* total_pixels);
 
@@ -475,13 +463,13 @@ static void transpose_image(const int fd_in, const int fd_out) {
         size_t source_col = source_row;
         size_t source_index = source_row * width + source_col;
         size_t target_index = source_index;
-        transpose8x8SSE2_diagonal(&output_pixels[0], source_index, width);
+        transpose_8x8_SSE2_diagonal(&output_pixels[0], source_index, width);
         source_col += 8;
         source_index += 8;
         target_index += width * 8;
 
         for (; source_col < width; source_col += 8) {
-          transpose8x8SSE2_inplace(&output_pixels[0], source_index, target_index, width);
+          transpose_8x8_SSE2_inplace(&output_pixels[0], source_index, target_index, width);
           source_index += 8;
           target_index += width * 8;
         }
@@ -497,13 +485,13 @@ static void transpose_image(const int fd_in, const int fd_out) {
         size_t source_index = source_row * width + source_col;
         size_t target_index = source_index;
 
-        transpose8x8SSE2_diagonal(&output_pixels[0], source_index, width);
+        transpose_8x8_SSE2_diagonal(&output_pixels[0], source_index, width);
         source_col += 8;
         source_index += 8;
         target_index += width * 8;
 
         while (source_col <= width - 8) {
-          transpose8x8SSE2_inplace(&output_pixels[0], source_index, target_index, width);
+          transpose_8x8_SSE2_inplace(&output_pixels[0], source_index, target_index, width);
           source_col += 8;
           source_index += 8;
           target_index += width * 8;
@@ -539,11 +527,11 @@ static void transpose_image(const int fd_in, const int fd_out) {
     }
   }
   else {
-    // generic matrix
-    // transpose by copying
+    // generic (rectangular) matrix
+    // transpose out of place (by copying)
 
-    const uint16_t* input_pixels = MemoryMapFile_Input(fd_in, data_to_write);
-    input_pixels += 4;
+    const void* input_addr = memory_map_for_reading(fd_in, bytes_to_write);
+    const uint16_t* input_pixels = ((uint16_t*)input_addr) + 4; // skip header (8 bytes)
 
     size_t source_row = 0;
     while (source_row <= height - 8) {
@@ -551,7 +539,7 @@ static void transpose_image(const int fd_in, const int fd_out) {
       size_t target_index = source_row;
       size_t source_col = 0;
       while (source_col <= width - 8) {
-        transpose8x8SSE2_outofplace(&input_pixels[0], source_index, &output_pixels[0], target_index, width, height);
+        transpose_8x8_SSE2_out_of_place(&input_pixels[0], source_index, &output_pixels[0], target_index, width, height);
         source_col += 8;
         source_index += 8;
         target_index += height /*target width*/ * 8;
@@ -585,9 +573,9 @@ static void transpose_image(const int fd_in, const int fd_out) {
     }
   }
 
-  if (munmap(mappedFile_out, data_to_write) == -1) {
+  if (munmap(output_addr, bytes_to_write) == -1) {
     if (PRINT_ERRORS)
-      write(1, "munmap\n", 7);
+      write(STDERR_FILENO, "munmap\n", 7);
     _exit(1);
   }
 }
@@ -595,25 +583,26 @@ static void transpose_image(const int fd_in, const int fd_out) {
 int main(int argc, char* argv[]) {
   if (argc != 3) {
     if (PRINT_ERRORS)
-      write(1, "argc\n", 5);
+      write(STDERR_FILENO, "argc\n", 5);
     _exit(1);
   }
 
   const char* const input_file = argv[1];
   const char* const output_file = argv[2];
 
-  // Open the file
+  // Open the files
+
   const int fd_in = open(input_file, O_RDONLY, 0);
   if (fd_in == -1) {
     if (PRINT_ERRORS)
-      write(1, "fd_in\n", 6);
+      write(STDERR_FILENO, "fd_in\n", 6);
     _exit(1);
   }
 
   const int fd_out = open(output_file, O_RDWR | O_CREAT, 0644);
   if (fd_out == -1) {
     if (PRINT_ERRORS)
-      write(1, "fd_out\n", 7);
+      write(STDERR_FILENO, "fd_out\n", 7);
     _exit(1);
   }
 
